@@ -28,10 +28,12 @@ import com.basistech.rosette.apimodel.LanguageResponse;
 import com.basistech.rosette.apimodel.LinkedEntitiesResponse;
 import com.basistech.rosette.apimodel.MorphologyOptions;
 import com.basistech.rosette.apimodel.MorphologyResponse;
+import com.basistech.rosette.apimodel.Name;
 import com.basistech.rosette.apimodel.NameSimilarityRequest;
 import com.basistech.rosette.apimodel.NameSimilarityResponse;
 import com.basistech.rosette.apimodel.NameTranslationRequest;
 import com.basistech.rosette.apimodel.NameTranslationResponse;
+import com.basistech.rosette.apimodel.Options;
 import com.basistech.rosette.apimodel.PingResponse;
 import com.basistech.rosette.apimodel.RelationshipsOptions;
 import com.basistech.rosette.apimodel.RelationshipsResponse;
@@ -54,6 +56,7 @@ import org.apache.http.HttpHeaders;
 import org.apache.http.HttpResponse;
 import org.apache.http.annotation.Immutable;
 import org.apache.http.annotation.ThreadSafe;
+import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
@@ -92,8 +95,8 @@ import static java.net.HttpURLConnection.HTTP_OK;
  * You can use the RosetteAPI to access Rosette API endpoints.
  * RosetteAPI is thread-safe and immutable.
  */
-@ThreadSafe
 @Immutable
+@ThreadSafe
 public class RosetteAPI implements Closeable {
 
     public static final String DEFAULT_URL_BASE = "https://api.rosette.com/rest/v1";
@@ -125,8 +128,11 @@ public class RosetteAPI implements Closeable {
     private String key;
     private String urlBase = DEFAULT_URL_BASE;
     private int failureRetries;
+    private LanguageCode language;
+    private Options options;
+    private String genre;
     private ObjectMapper mapper;
-    private CloseableHttpClient httpClient;
+    private HttpClient httpClient;
     private List<Header> customHeaders;
 
     /**
@@ -135,7 +141,10 @@ public class RosetteAPI implements Closeable {
      * @param key Rosette API key
      * @throws RosetteAPIException If the service is not compatible with the version of the binding.
      * @throws IOException         General IO exception
+     *
+     * @deprecated use RosetteAPI.Builder class
      */
+    @Deprecated
     public RosetteAPI(String key) throws IOException, RosetteAPIException {
         this(key, DEFAULT_URL_BASE);
     }
@@ -148,7 +157,10 @@ public class RosetteAPI implements Closeable {
      * @param alternateUrl Alternate Rosette API URL
      * @throws RosetteAPIException If the service is not compatible with the version of the binding.
      * @throws IOException         General IO exception
+     *
+     * @deprecated use RosetteAPI.Builder class
      */
+    @Deprecated
     public RosetteAPI(String key, String alternateUrl) throws IOException, RosetteAPIException {
         Objects.requireNonNull(alternateUrl, "alternateUrl cannot be null");
         this.key = key;
@@ -160,11 +172,55 @@ public class RosetteAPI implements Closeable {
         mapper = ApiModelMixinModule.setupObjectMapper(new ObjectMapper());
         customHeaders = new ArrayList<>();
         initHttpClient();
-
         checkVersionCompatibility();
     }
 
     /**
+     * Constructs a Rosette API instance using the builder syntax.
+     *
+     * @param key            Rosette API key
+     * @param urlToCall   Alternate Rosette API URL
+     * @param failureRetries Number of times to retry in case of failure; default 1
+     * @param language       source language
+     * @param genre          genre (ex "social-media")
+     * @param options        options for the request
+     * @throws IOException          General IO exception
+     * @throws RosetteAPIException  Problem with the API request
+     */
+    private RosetteAPI(String key, String urlToCall, int failureRetries,
+                       LanguageCode language, String genre, Options options,
+                       HttpClient httpClient)
+                        throws IOException, RosetteAPIException {
+        this.key = key;
+        this.language = language;
+        this.genre = genre;
+        this.options = options;
+        urlBase = urlToCall.trim().replaceAll("/+$", "");
+        this.failureRetries = failureRetries;
+        mapper = ApiModelMixinModule.setupObjectMapper(new ObjectMapper());
+        customHeaders = new ArrayList<>();
+        setUpHttpClient(httpClient);
+    }
+
+    /**
+     * @param httpClient user provided http client
+     * @throws IOException
+     */
+    private void setUpHttpClient(HttpClient httpClient) throws IOException {
+        if (httpClient == null) {
+            initHttpClient();
+        } else {
+            this.httpClient = httpClient;
+        }
+        HttpResponse response = this.httpClient.execute(new HttpPost(urlBase));
+        if (response != null) {
+            if (response instanceof CloseableHttpResponse) {
+                ((CloseableHttpResponse)response).close();
+            }
+        }
+    }
+    /**
+     * Returns the version of the binding.
      *
      * @return version of the binding
      */
@@ -179,21 +235,39 @@ public class RosetteAPI implements Closeable {
     }
 
     /**
-     * Sets the number of retries in case of failure (default is one).
+     * Return failure retries.
      *
-     * @param failureRetries number of retries
+     * @return failure retries
      */
-    public void setFailureRetries(int failureRetries) {
-        this.failureRetries = failureRetries >= 0 ? failureRetries : 1;
+    public int getFailureRetries() {
+        return failureRetries;
     }
 
     /**
-     * Sets the Rosette API key.
+     * Return language code.
      *
-     * @param key Rosette API key
+     * @return source language
      */
-    public void setAPIKey(String key) {
-        this.key = key;
+    public LanguageCode getLanguageCode() {
+        return language;
+    }
+
+    /**
+     * Returns the genre.
+     *
+     * @return genre if being used by API
+     */
+    public String getGenre() {
+        return genre;
+    }
+
+    /**
+     * Returns options used by API.
+     *
+     * @return options
+     */
+    public Options getOptions() {
+        return options;
     }
 
     /**
@@ -244,7 +318,7 @@ public class RosetteAPI implements Closeable {
     }
 
     /**
-     * Checks binding version compatiblity against the Rosette API server
+     * Checks binding version compatibility against the Rosette API server
      *
      * @return boolean true if compatible
      * @throws IOException
@@ -274,12 +348,29 @@ public class RosetteAPI implements Closeable {
     /**
      * Matches 2 names and returns a score in NameMatchingResponse.
      *
-     * @param request request object with the names.
+     * @param request request
+     * @return response
+     * @throws RosetteAPIException Rosette specific exception
+     * @throws IOException         General IO exception
+     *
+     * @deprecated replaced by {@link #getNameSimilarity(Name, Name) getNameSimilarity}
+     */
+    @Deprecated
+    public NameSimilarityResponse getNameSimilarity(NameSimilarityRequest request) throws RosetteAPIException, IOException {
+        return getNameSimilarity(request.getName1(), request.getName2());
+    }
+
+    /**
+     * Matches 2 names and returns a score in NameMatchingResponse.
+     *
+     * @param nameOne first name
+     * @param nameTwo second name
      * @return response
      * @throws RosetteAPIException Rosette specific exception
      * @throws IOException         General IO exception
      */
-    public NameSimilarityResponse getNameSimilarity(NameSimilarityRequest request) throws RosetteAPIException, IOException {
+    public NameSimilarityResponse getNameSimilarity(Name nameOne, Name nameTwo) throws RosetteAPIException, IOException {
+        NameSimilarityRequest request = new NameSimilarityRequest(nameOne, nameTwo);
         return sendPostRequest(request, urlBase + NAME_SIMILARITY_SERVICE_PATH, NameSimilarityResponse.class);
     }
 
@@ -306,13 +397,34 @@ public class RosetteAPI implements Closeable {
      * descending confidence.
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated Replaced by {@link #getLanguage(InputStream, String) getLanguage}
      */
+    @Deprecated
     public LanguageResponse getLanguage(InputStream inputStream, String contentType, LanguageOptions options)
             throws RosetteAPIException, IOException {
         byte[] bytes = getBytes(inputStream);
         Request request = new DocumentRequest.Builder().contentBytes(bytes, contentType)
                 .options(options).build();
         return sendPostRequest(request, urlBase + LANGUAGE_SERVICE_PATH, LanguageResponse.class);
+    }
+
+    /**
+     * Performs language identification on data from an InputSteam. Builds request object from API, not parameters.
+     * Returns a list of languages.
+     *
+     * @param inputStream Input stream of file
+     * @param contentType the content type (e.g. text/html)
+     *
+     * @return An ordered list of detected languages, including language and detection confidence, sorted by
+     * descending confidence.
+     * @throws RosetteAPIException - There's a problem with the Rosette API request
+     * @throws IOException         - There's a problem with communication or JSON serialization/deserialization
+     */
+    public LanguageResponse getLanguage(InputStream inputStream, String contentType) throws RosetteAPIException, IOException {
+        byte[] bytes = getBytes(inputStream);
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentBytes(bytes, contentType).build(), urlBase + LANGUAGE_SERVICE_PATH, LanguageResponse.class);
     }
 
     /**
@@ -324,13 +436,31 @@ public class RosetteAPI implements Closeable {
      * descending confidence.
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated Replaced by {@link #getLanguage(URL) getLanguage}
      */
+    @Deprecated
     public LanguageResponse getLanguage(URL url, LanguageOptions options) throws RosetteAPIException, IOException {
         Request request = new DocumentRequest.Builder()
                 .contentUri(url.toString())
                 .options(options)
                 .build();
         return sendPostRequest(request, urlBase + LANGUAGE_SERVICE_PATH, LanguageResponse.class);
+    }
+
+    /**
+     * Performs language identification on data read from an URL. Builds request object from API, not parameters.
+     * Returns a list of languages.
+     *
+     * @param url URL for language detection
+     * @return An ordered list of detected languages, including language and detection confidence, sorted by
+     * descending confidence.
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     */
+    public LanguageResponse getLanguage(URL url) throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentUri(url.toString()).build(), urlBase + LANGUAGE_SERVICE_PATH, LanguageResponse.class);
     }
 
     /**
@@ -342,12 +472,31 @@ public class RosetteAPI implements Closeable {
      * descending confidence.
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated Replaced by {@link #getLanguage(String) getLanguage}
      */
+    @Deprecated
     public LanguageResponse getLanguage(String content, LanguageOptions options)
             throws RosetteAPIException, IOException {
         Request request = new DocumentRequest.Builder().content(content)
                 .options(options).build();
         return sendPostRequest(request, urlBase + LANGUAGE_SERVICE_PATH, LanguageResponse.class);
+    }
+
+    /**
+     * Performs language identification on data read from a string. Builds request object from API not parameters.
+     * Returns a list of languages.
+     *
+     * @param content String content for language detection.
+     *
+     * @return An ordered list of detected languages, including language and detection confidence, sorted by
+     * descending confidence.
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     */
+    public LanguageResponse getLanguage(String content) throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.content(content).build(), urlBase + LANGUAGE_SERVICE_PATH, LanguageResponse.class);
     }
 
     /**
@@ -363,7 +512,10 @@ public class RosetteAPI implements Closeable {
      * @return MorphologyResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getMorphology(MorphologicalFeature, InputStream, String) getMorphology}
      */
+    @Deprecated
     public MorphologyResponse getMorphology(MorphologicalFeature morphologicalFeature,
                                             InputStream inputStream,
                                             String contentType,
@@ -380,6 +532,27 @@ public class RosetteAPI implements Closeable {
     }
 
     /**
+     * Returns morphological analysis of the input file. The response may include lemmas, part of speech tags,
+     * compound word components, and Han readings. Builds request object from API rather than from parameters.
+     * Support for specific return types depends on language.
+     *
+     * @param inputStream Input stream of file
+     * @param contentType The content type (e.g. text/html)
+     * @return MorphologyResponse
+     * @throws RosetteAPIException
+     * @throws IOException
+     */
+    public MorphologyResponse getMorphology(MorphologicalFeature morphologicalFeature,
+                                            InputStream inputStream,
+                                            String contentType)
+            throws RosetteAPIException, IOException {
+        byte[] bytes = getBytes(inputStream);
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentBytes(bytes, contentType).build(), urlBase + MORPHOLOGY_SERVICE_PATH + "/" + morphologicalFeature.toString(),
+                MorphologyResponse.class);
+    }
+
+    /**
      * Returns morphological analysis of the URL content.
      * The response may include lemmas, part of speech tags, compound word components, and Han readings.
      * Support for specific return types depends on language.
@@ -391,7 +564,10 @@ public class RosetteAPI implements Closeable {
      * @return MorphologyResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getMorphology(MorphologicalFeature, URL) getMorphology}
      */
+    @Deprecated
     public MorphologyResponse getMorphology(MorphologicalFeature morphologicalFeature, URL url,
                                             LanguageCode language,
                                             MorphologyOptions options) throws RosetteAPIException, IOException {
@@ -401,6 +577,23 @@ public class RosetteAPI implements Closeable {
                 .options(options)
                 .build();
         return sendPostRequest(request, urlBase + MORPHOLOGY_SERVICE_PATH + "/" + morphologicalFeature.toString(),
+                MorphologyResponse.class);
+    }
+
+    /**
+     * Returns morphological analysis of the URL content. The response may include lemmas, part of speech tags, compound
+     * word components, and Han readings. Builds request object from API, rather than from parameters. Support for
+     * specific return types depends on language.
+     *
+     * @param url URL containing the data
+     * @return MorphologyResponse
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a problem with communication or JSON serialization/deserialization.
+     */
+    public MorphologyResponse getMorphology(MorphologicalFeature morphologicalFeature, URL url)
+            throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentUri(url.toString()).build(), urlBase + MORPHOLOGY_SERVICE_PATH + "/" + morphologicalFeature.toString(),
                 MorphologyResponse.class);
     }
 
@@ -416,7 +609,10 @@ public class RosetteAPI implements Closeable {
      * @return MorphologyResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getMorphology(MorphologicalFeature, String) getMorphology}
      */
+    @Deprecated
     public MorphologyResponse getMorphology(MorphologicalFeature morphologicalFeature, String content,
                                             LanguageCode language, MorphologyOptions options)
             throws RosetteAPIException, IOException {
@@ -426,9 +622,26 @@ public class RosetteAPI implements Closeable {
                 .options(options)
                 .build();
         return sendPostRequest(request, urlBase + MORPHOLOGY_SERVICE_PATH + "/" + morphologicalFeature.toString(),
-
                 MorphologyResponse.class);
     }
+
+    /**
+     * Returns morphological analysis of a string. The response may include lemmas, part of speech tags, compound word
+     * components, and Han reading. Constructs request object from API information rather than from parameters. Support
+     * for specific return types depends on language.
+     *
+     * @param content String containing the data.
+     * @return MorphologyResponse
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     */
+    public MorphologyResponse getMorphology(MorphologicalFeature morphologicalFeature, String content)
+            throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.content(content).build(), urlBase + MORPHOLOGY_SERVICE_PATH + "/" + morphologicalFeature.toString(),
+                MorphologyResponse.class);
+    }
+
 
     /**
      * Returns entities extracted from the input file.
@@ -446,7 +659,10 @@ public class RosetteAPI implements Closeable {
      * @return EntitiesResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaces by {@link #getEntities(InputStream, String) getEntities}
      */
+    @Deprecated
     public EntitiesResponse getEntities(InputStream inputStream,
                                         String contentType,
                                         LanguageCode language, EntitiesOptions options)
@@ -459,6 +675,28 @@ public class RosetteAPI implements Closeable {
                 .build();
         return sendPostRequest(request, urlBase + ENTITIES_SERVICE_PATH, EntitiesResponse.class);
     }
+
+    /**
+     * Returns entities extracted from the input file. Builds request object from API fields not from parameters.
+     * <p>
+     * The response is a list of extracted entities. Each entity includes chain ID (all instances of the same
+     * entity share a chain id), mention (entity text in the input), normalized text (the most complete form
+     * of this entity that appears in the input), count (how many times this entity appears in the input), and the
+     * confidence associated with the extraction.
+     *
+     * @param inputStream Input stream of file.
+     * @param contentType The content type of the data (e.g. text/html)
+     * @return EntitiesResponse
+     * @throws RosetteAPIException
+     * @throws IOException
+     */
+    public EntitiesResponse getEntities(InputStream inputStream, String contentType)
+            throws RosetteAPIException, IOException {
+        byte[] bytes = getBytes(inputStream);
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentBytes(bytes, contentType).build(), urlBase + ENTITIES_SERVICE_PATH, EntitiesResponse.class);
+    }
+
 
     /**
      * Returns entities extracted from the URL content.
@@ -475,7 +713,10 @@ public class RosetteAPI implements Closeable {
      * @return EntitiesResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getEntities(URL) getEntities}
      */
+    @Deprecated
     public EntitiesResponse getEntities(URL url, LanguageCode language, EntitiesOptions options)
             throws RosetteAPIException, IOException {
         Request request = new DocumentRequest.Builder()
@@ -484,6 +725,26 @@ public class RosetteAPI implements Closeable {
                 .options(options)
                 .build();
         return sendPostRequest(request, urlBase + ENTITIES_SERVICE_PATH, EntitiesResponse.class);
+    }
+
+    /**
+     *Returns entities extracted from the URL content. Request object built through API rather than parameters.
+     * <p>
+     * The response is a list of extracted entities.
+     * Each entity includes chain ID (all instances of the same entity share a chain id),
+     * mention (entity text in the input), normalized text (the most complete form of this entity that appears in
+     * the input), count (how many times this entity appears in the input), and the confidence associated with the
+     * extraction.
+     *
+     * @param url URL containing the data.
+     * @return EntitiesResponse
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     */
+    public EntitiesResponse getEntities(URL url)
+            throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentUri(url.toString()).build(), urlBase + ENTITIES_SERVICE_PATH, EntitiesResponse.class);
     }
 
     /**
@@ -501,7 +762,10 @@ public class RosetteAPI implements Closeable {
      * @return EntitiesResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getEntities(String) getEntities}
      */
+    @Deprecated
     public EntitiesResponse getEntities(String content, LanguageCode language, EntitiesOptions options)
             throws RosetteAPIException, IOException {
         Request request = new DocumentRequest.Builder()
@@ -510,6 +774,26 @@ public class RosetteAPI implements Closeable {
                 .options(options)
                 .build();
         return sendPostRequest(request, urlBase + ENTITIES_SERVICE_PATH, EntitiesResponse.class);
+    }
+
+    /**
+     *Returns entities extracted from a string. Request object built from API rather than from parameters.
+     * <p>
+     * The response is a list of extracted entities.
+     * Each entity includes chain ID (all instances of the same entity share a chain id),
+     * mention (entity text in the input), normalized text (the most complete form of this entity that appears in
+     * the input), count (how many times this entity appears in the input), and the confidence associated with the
+     * extraction.
+     *
+     * @param content String containing the data.
+     * @return EntitiesResponse
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     */
+    public EntitiesResponse getEntities(String content)
+            throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.content(content).build(), urlBase + ENTITIES_SERVICE_PATH, EntitiesResponse.class);
     }
 
     /**
@@ -524,6 +808,7 @@ public class RosetteAPI implements Closeable {
      * @return LinkedEntityResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
      * @deprecated Merged into {@link #getEntities(String, LanguageCode, EntitiesOptions)}.
      */
     @Deprecated
@@ -550,6 +835,7 @@ public class RosetteAPI implements Closeable {
      * @return LinkedEntityResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
      * @deprecated Merged into {@link #getEntities(InputStream, String, LanguageCode, EntitiesOptions)}
      */
     @Deprecated
@@ -597,10 +883,13 @@ public class RosetteAPI implements Closeable {
      * @return CategoriesResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getCategories(InputStream, String) getCategories}
      */
+    @Deprecated
     public CategoriesResponse getCategories(InputStream inputStream,
-                                            String contentType,
-                                            LanguageCode language, CategoriesOptions options)
+                                                 String contentType,
+                                                 LanguageCode language, CategoriesOptions options)
             throws RosetteAPIException, IOException {
         byte[] bytes = getBytes(inputStream);
         Request request = new DocumentRequest.Builder()
@@ -609,6 +898,26 @@ public class RosetteAPI implements Closeable {
                 .options(options)
                 .build();
         return sendPostRequest(request, urlBase + CATEGORIES_SERVICE_PATH, CategoriesResponse.class);
+    }
+
+    /**
+     * Returns an ordered list of categories identified in the input file. The categories are Tier 1 contextual
+     * categories defined in the <a href="http://www.iab.net/QAGInitiative/overview/taxonomy">QAG Taxonomy</a>.
+     * The request object is built from the API object rather than from the parameters.
+     * <p>
+     * The response is the contextual categories identified in the input.
+     * @param inputStream Input stream of file.
+     * @param contentType The contentType of the file (e.g. text/html)
+     * @return CategoriesResponse
+     * @throws RosetteAPIException
+     * @throws IOException
+     */
+    public CategoriesResponse getCategories(InputStream inputStream,
+                                            String contentType)
+            throws RosetteAPIException, IOException {
+        byte[] bytes = getBytes(inputStream);
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentBytes(bytes, contentType).build(), urlBase + CATEGORIES_SERVICE_PATH, CategoriesResponse.class);
     }
 
     /**
@@ -623,7 +932,10 @@ public class RosetteAPI implements Closeable {
      * @return CategoriesResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated Replaced by {@link #getCategories(URL) getCategories}
      */
+    @Deprecated
     public CategoriesResponse getCategories(URL url, LanguageCode language, CategoriesOptions options)
             throws RosetteAPIException, IOException {
         Request request = new DocumentRequest.Builder()
@@ -632,6 +944,24 @@ public class RosetteAPI implements Closeable {
                 .options(options)
                 .build();
         return sendPostRequest(request, urlBase + CATEGORIES_SERVICE_PATH, CategoriesResponse.class);
+    }
+
+    /**
+     * Returns an ordered list of categories identified in the input file. The categories are Tier 1 contextual
+     * categories defined in the <a href="http://www.iab.net/QAGInitiative/overview/taxonomy">QAG Taxonomy</a>.
+     * The request object is built from the API object rather than from the parameters.
+     * <p>
+     * The response is the contextual categories identified in the input.
+     *
+     * @param url URL containing the data.
+     * @return CategoriesResponse
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     */
+    public CategoriesResponse getCategories(URL url)
+            throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentUri(url.toString()).build(), urlBase + CATEGORIES_SERVICE_PATH, CategoriesResponse.class);
     }
 
     /**
@@ -646,7 +976,10 @@ public class RosetteAPI implements Closeable {
      * @return CategoriesResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getCategories(String) getCategories}
      */
+    @Deprecated
     public CategoriesResponse getCategories(String content, LanguageCode language, CategoriesOptions options)
             throws RosetteAPIException, IOException {
         Request request = new DocumentRequest.Builder()
@@ -655,6 +988,24 @@ public class RosetteAPI implements Closeable {
                 .options(options)
                 .build();
         return sendPostRequest(request, urlBase + CATEGORIES_SERVICE_PATH, CategoriesResponse.class);
+    }
+
+    /**
+     * Returns an ordered list of categories identified in the input file. The categories are Tier 1 contextual
+     * categories defined in the <a href="http://www.iab.net/QAGInitiative/overview/taxonomy">QAG Taxonomy</a>.
+     * The request object is built from the API object rather than from the parameters.
+     * <p>
+     * The response is the contextual categories identified in the input.
+     *
+     * @param content String containing the data.
+     * @return CategoriesResponse
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a problem with communication or JSON serialization/deserialization.
+     */
+    public CategoriesResponse getCategories(String content)
+            throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.content(content).build(), urlBase + CATEGORIES_SERVICE_PATH, CategoriesResponse.class);
     }
 
     /**
@@ -676,8 +1027,11 @@ public class RosetteAPI implements Closeable {
      * @param options  RelationshipOptions
      * @return RelationshipsResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request
-     * @throws IOException         - If there is a commuincation or JSON serialization/deserialization error
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getRelationships(String) getRelationships}
      */
+    @Deprecated
     public RelationshipsResponse getRelationships(String content, LanguageCode language, RelationshipsOptions options)
             throws RosetteAPIException, IOException {
         Request request = new DocumentRequest.Builder()
@@ -686,6 +1040,30 @@ public class RosetteAPI implements Closeable {
                 .options(options)
                 .build();
         return sendPostRequest(request, urlBase + RELATIONSHIPS_SERVICE_PATH, RelationshipsResponse.class);
+    }
+
+    /**
+     * Returns each relationship extracted from the input. Request object uses API attributes rather than parameters.
+     * <p>
+     * The response is a list of extracted relationships. A relationship contains
+     * <p>
+     * predicate - usually the main verb, property or action that is expressed by the text
+     * arg1 - usually the subject, agent or main actor of the relationship
+     * arg2 [optional] - complements the predicate and is usually the object, theme or patient of the relationship
+     * arg3 [optional] - usually an additional object in ditransitive verbs
+     * adjuncts [optional] - contain all optional parts of a relationship which are not temporal or locative expressions
+     * locatives [optional] - usually express the locations the action expressed by the relationship took place
+     * temporals [ optional] - usually express the time in which the action expressed by the relationship took place
+     * confidence - a measure of quality of relationship extraction, between 0 - 1
+     * @param content String containing the data.
+     * @return RelationshipsResponse
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     */
+    public RelationshipsResponse getRelationships(String content)
+            throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.content(content).build(), urlBase + RELATIONSHIPS_SERVICE_PATH, RelationshipsResponse.class);
     }
 
     /**
@@ -709,7 +1087,10 @@ public class RosetteAPI implements Closeable {
      * @return RelationshipsResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error
+     *
+     * @deprecated Replaced by {@link #getRelationships(InputStream, String) getRelationships}
      */
+    @Deprecated
     public RelationshipsResponse getRelationships(InputStream inputStream,
                                                   String contentType,
                                                   LanguageCode language, RelationshipsOptions options)
@@ -721,6 +1102,33 @@ public class RosetteAPI implements Closeable {
                 .options(options)
                 .build();
         return sendPostRequest(request, urlBase + RELATIONSHIPS_SERVICE_PATH, RelationshipsResponse.class);
+    }
+
+    /**
+     * Returns each relationship extracted from the input. Request object uses API attributes rather than parameters.
+     * <p>
+     * The response is a list of extracted relationships. A relationship contains
+     * <p>
+     * predicate - usually the main verb, property or action that is expressed by the text
+     * arg1 - usually the subject, agent or main actor of the relationship
+     * arg2 [optional] - complements the predicate and is usually the object, theme or patient of the relationship
+     * arg3 [optional] - usually an additional object in ditransitive verbs
+     * adjuncts [optional] - contain all optional parts of a relationship which are not temporal or locative expressions
+     * locatives [optional] - usually express the locations the action expressed by the relationship took place
+     * temporals [ optional] - usually express the time in which the action expressed by the relationship took place
+     * confidence - a measure of quality of relationship extraction, between 0 - 1
+     * @param inputStream Input stream of file.
+     * @param contentType The content type of the file.
+     * @return RelationshipsResponse
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     */
+    public RelationshipsResponse getRelationships(InputStream inputStream,
+                                                  String contentType)
+            throws RosetteAPIException, IOException {
+        byte[] bytes = getBytes(inputStream);
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentBytes(bytes, contentType).build(), urlBase + RELATIONSHIPS_SERVICE_PATH, RelationshipsResponse.class);
     }
 
     /**
@@ -742,8 +1150,11 @@ public class RosetteAPI implements Closeable {
      * @param options  RelationshipOptions
      * @return RelationshipsResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request
-     * @throws IOException         - If there is a commuincation or JSON serialization/deserialization error
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error
+     *
+     * @deprecated replaced {@link #getRelationships(URL) getRelationships}
      */
+    @Deprecated
     public RelationshipsResponse getRelationships(URL url, LanguageCode language, RelationshipsOptions options)
             throws RosetteAPIException, IOException {
         Request request = new DocumentRequest.Builder()
@@ -752,6 +1163,31 @@ public class RosetteAPI implements Closeable {
                 .options(options)
                 .build();
         return sendPostRequest(request, urlBase + RELATIONSHIPS_SERVICE_PATH, RelationshipsResponse.class);
+    }
+
+    /**
+     * Returns each relationship extracted from the input.
+     * <p>
+     * The response is a list of extracted relationships. A relationship contains
+     * <p>
+     * predicate - usually the main verb, property or action that is expressed by the text
+     * arg1 - usually the subject, agent or main actor of the relationship
+     * arg2 [optional] - complements the predicate and is usually the object, theme or patient of the relationship
+     * arg3 [optional] - usually an additional object in ditransitive verbs
+     * adjuncts [optional] - contain all optional parts of a relationship which are not temporal or locative expressions
+     * locatives [optional] - usually express the locations the action expressed by the relationship took place
+     * temporals [ optional] - usually express the time in which the action expressed by the relationship took place
+     * confidence - a measure of quality of relationship extraction, between 0 - 1
+     *
+     * @param url URL containing the data.
+     * @return RelationshipOptions
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a problem with communication or JSON serialization/deserialization.
+     */
+    public RelationshipsResponse getRelationships(URL url)
+            throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentUri(url.toString()).build(), urlBase + RELATIONSHIPS_SERVICE_PATH, RelationshipsResponse.class);
     }
 
     /**
@@ -766,7 +1202,10 @@ public class RosetteAPI implements Closeable {
      * @return SentimentResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getSentiment(InputStream, String) getSentiment}
      */
+    @Deprecated
     public SentimentResponse getSentiment(InputStream inputStream,
                                           String contentType,
                                           LanguageCode language, SentimentOptions options)
@@ -781,6 +1220,26 @@ public class RosetteAPI implements Closeable {
     }
 
     /**
+     * Analyzes the positive and negative sentiment expressed by the input. Request object built from API rather than
+     * from individual request.
+     * <p>
+     * The response contains sentiment analysis results.
+     *
+     * @param inputStream Input stream of file.
+     * @param contentType The content type of the file (e.g. text/html)
+     * @return SentimentResponse
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     */
+    public SentimentResponse getSentiment(InputStream inputStream,
+                                          String contentType)
+            throws RosetteAPIException, IOException {
+        byte[] bytes = getBytes(inputStream);
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentBytes(bytes, contentType).build(), urlBase + SENTIMENT_SERVICE_PATH, SentimentResponse.class);
+    }
+
+    /**
      * Analyzes the positive and negative sentiment expressed by the input.
      * <p>
      * The response contains sentiment analysis results.
@@ -791,7 +1250,10 @@ public class RosetteAPI implements Closeable {
      * @return SentimentResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getSentiment(URL) getSentiment}
      */
+    @Deprecated
     public SentimentResponse getSentiment(URL url, LanguageCode language, SentimentOptions options)
             throws RosetteAPIException, IOException {
         Request request = new DocumentRequest.Builder()
@@ -803,6 +1265,23 @@ public class RosetteAPI implements Closeable {
     }
 
     /**
+     * Analyzes the positive and negative sentiment expressed by the input. Request object built from API rather than
+     * from individual request.
+     * <p>
+     * The response contains sentiment analysis results.
+     *
+     * @param url URL containing the data.
+     * @return SentimentOptions
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     */
+    public SentimentResponse getSentiment(URL url)
+            throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentUri(url.toString()).build(), urlBase + SENTIMENT_SERVICE_PATH, SentimentResponse.class);
+    }
+
+    /**
      * Analyzes the positive and negative sentiment expressed by the input.
      * <p>
      * The response contains sentiment analysis results.
@@ -813,7 +1292,10 @@ public class RosetteAPI implements Closeable {
      * @return SentimentResponse
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getSentiment(String) getSentiment}
      */
+    @Deprecated
     public SentimentResponse getSentiment(String content, LanguageCode language, SentimentOptions options)
             throws RosetteAPIException, IOException {
         Request request = new DocumentRequest.Builder()
@@ -825,6 +1307,23 @@ public class RosetteAPI implements Closeable {
     }
 
     /**
+     * Analyzes the positive and negative sentiment expressed by the input. Request object uses API object rather than
+     * parameters.
+     * <p>
+     * The response contains sentiment analysis results.
+     *
+     * @param content String containing the data.
+     * @return SentimentOptions
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     */
+    public SentimentResponse getSentiment(String content)
+            throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.content(content).build(), urlBase + SENTIMENT_SERVICE_PATH, SentimentResponse.class);
+    }
+
+    /**
      * Divides the input into tokens.
      *
      * @param inputStream Input stream of file.
@@ -833,7 +1332,10 @@ public class RosetteAPI implements Closeable {
      * @return The response contains a list of tokens.
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getTokens(InputStream, String) getTokens}
      */
+    @Deprecated
     public TokensResponse getTokens(InputStream inputStream, String contentType, LanguageCode language)
             throws RosetteAPIException, IOException {
         byte[] bytes = getBytes(inputStream);
@@ -845,6 +1347,23 @@ public class RosetteAPI implements Closeable {
     }
 
     /**
+     * Divides the input into tokens. Request object built through API calls rather than from parameters.
+     *
+     * @param inputStream Input stream of file.
+     * @param contentType The content type of the file (e.g. text/html)
+     *
+     * @return The response contains a list of tokens.
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a problem with communication or JSON serialization/deserialization
+     */
+    public TokensResponse getTokens(InputStream inputStream, String contentType)
+            throws RosetteAPIException, IOException {
+        byte[] bytes = getBytes(inputStream);
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentBytes(bytes, contentType).build(), urlBase + TOKENS_SERVICE_PATH, TokensResponse.class);
+    }
+
+    /**
      * Divides the input into tokens.
      *
      * @param url      URL containing the data.
@@ -852,13 +1371,29 @@ public class RosetteAPI implements Closeable {
      * @return The response contains a list of tokens.
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getTokens(URL) getTokens}
      */
+    @Deprecated
     public TokensResponse getTokens(URL url, LanguageCode language) throws RosetteAPIException, IOException {
         Request request = new DocumentRequest.Builder()
                 .language(language)
                 .contentUri(url.toString())
                 .build();
         return sendPostRequest(request, urlBase + TOKENS_SERVICE_PATH, TokensResponse.class);
+    }
+
+    /**
+     * Divides the input into tokens. Request object uses API fields rather than call parameters.
+     *
+     * @param url URL containing the data.
+     * @return The response contains a list of tokens.
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     */
+    public TokensResponse getTokens(URL url) throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentUri(url.toString()).build(), urlBase + TOKENS_SERVICE_PATH, TokensResponse.class);
     }
 
     /**
@@ -869,13 +1404,29 @@ public class RosetteAPI implements Closeable {
      * @return The response contains a list of tokens.
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getTokens(String) getTokens}
      */
+    @Deprecated
     public TokensResponse getTokens(String content, LanguageCode language) throws RosetteAPIException, IOException {
         Request request = new DocumentRequest.Builder()
                 .language(language)
                 .content(content)
                 .build();
         return sendPostRequest(request, urlBase + TOKENS_SERVICE_PATH, TokensResponse.class);
+    }
+
+    /**
+     * Divides the input into tokens. Request object is built from the API object rather than from parameters.
+     *
+     * @param content String containing the data.
+     * @return The response contains a list of tokens.
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     */
+    public TokensResponse getTokens(String content) throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.content(content).build(), urlBase + TOKENS_SERVICE_PATH, TokensResponse.class);
     }
 
     /**
@@ -887,7 +1438,10 @@ public class RosetteAPI implements Closeable {
      * @return The response contains a list of sentences.
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getSentences(InputStream, String) getSentences}
      */
+    @Deprecated
     public SentencesResponse getSentences(InputStream inputStream,
                                           String contentType,
                                           LanguageCode language)
@@ -901,6 +1455,23 @@ public class RosetteAPI implements Closeable {
     }
 
     /**
+     * Divides the input into sentences. Request object is built from the API object rather than from parameters.
+     *
+     * @param inputStream Input stream of file.
+     * @param contentType The content type of the file (e.g. text/html).
+     * @return The response contains a list of sentences.
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a problem with communication or JSON serialization/deserialization.
+     */
+    public SentencesResponse getSentences(InputStream inputStream,
+                                          String contentType)
+            throws RosetteAPIException, IOException {
+        byte[] bytes = getBytes(inputStream);
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentBytes(bytes, contentType).build(), urlBase + SENTENCES_SERVICE_PATH, SentencesResponse.class);
+    }
+
+    /**
      * Divides the input into sentences.
      *
      * @param url      URL containing the data.
@@ -908,13 +1479,29 @@ public class RosetteAPI implements Closeable {
      * @return The response contains a list of sentences.
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getSentences(URL) getSentences}
      */
+    @Deprecated
     public SentencesResponse getSentences(URL url, LanguageCode language) throws RosetteAPIException, IOException {
         Request request = new DocumentRequest.Builder()
                 .language(language)
                 .contentUri(url.toString())
                 .build();
         return sendPostRequest(request, urlBase + SENTENCES_SERVICE_PATH, SentencesResponse.class);
+    }
+
+    /**
+     * Divides the input into sentences. Request object is built from the API object rather than from parameters.
+     *
+     * @param url URL containing the data.
+     * @return The response contains a list of sentences.
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a communication of JSON serialization/deserialization error.
+     */
+    public SentencesResponse getSentences(URL url) throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.contentUri(url.toString()).build(), urlBase + SENTENCES_SERVICE_PATH, SentencesResponse.class);
     }
 
     /**
@@ -925,7 +1512,10 @@ public class RosetteAPI implements Closeable {
      * @return The response contains a list of sentences.
      * @throws RosetteAPIException - If there is a problem with the Rosette API request.
      * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     *
+     * @deprecated replaced by {@link #getSentences(String) getSentences}
      */
+    @Deprecated
     public SentencesResponse getSentences(String content, LanguageCode language)
             throws RosetteAPIException, IOException {
         Request request = new DocumentRequest.Builder()
@@ -933,6 +1523,20 @@ public class RosetteAPI implements Closeable {
                 .content(content)
                 .build();
         return sendPostRequest(request, urlBase + SENTENCES_SERVICE_PATH, SentencesResponse.class);
+    }
+
+    /**
+     * Divides the input into sentences. Request object is built from the API object rather than from parameters.
+     *
+     * @param content String containing the data.
+     * @return The response contains a list of sentences.
+     * @throws RosetteAPIException - If there is a problem with the Rosette API request.
+     * @throws IOException         - If there is a communication or JSON serialization/deserialization error.
+     */
+    public SentencesResponse getSentences(String content)
+            throws RosetteAPIException, IOException {
+        DocumentRequest.BaseBuilder documentRequestBuilder = getDocumentRequestBuilder();
+        return sendPostRequest(documentRequestBuilder.content(content).build(), urlBase + SENTENCES_SERVICE_PATH, SentencesResponse.class);
     }
 
     /**
@@ -1019,7 +1623,7 @@ public class RosetteAPI implements Closeable {
         RosetteAPIException lastException = null;
         int numRetries = this.failureRetries;
         while (numRetries-- > 0) {
-            CloseableHttpResponse response = null;
+            HttpResponse response = null;
             try {
                 response = httpClient.execute(post);
 
@@ -1039,7 +1643,9 @@ public class RosetteAPI implements Closeable {
                 }
             } finally {
                 if (response != null) {
-                    response.close();
+                    if (response instanceof CloseableHttpResponse) {
+                        ((CloseableHttpResponse)response).close();
+                    }
                 }
             }
         }
@@ -1214,6 +1820,112 @@ public class RosetteAPI implements Closeable {
 
     @Override
     public void close() throws IOException {
-        httpClient.close();
+        if (httpClient instanceof CloseableHttpClient) {
+            ((CloseableHttpClient)httpClient).close();
+        }
+    }
+
+    private DocumentRequest.BaseBuilder getDocumentRequestBuilder() throws IOException {
+        return new DocumentRequest.Builder()
+                .language(language)
+                .genre(genre)
+                .options(options);
+    }
+
+    /**
+     * Builder class for the RosetteAPI object.
+     */
+    public static class Builder {
+        protected LanguageCode language;
+        protected String genre;
+        protected Options options;
+        protected String key;
+        protected String urlBase = DEFAULT_URL_BASE;
+        protected int failureRetries = 1;
+        protected HttpClient httpClient;
+
+        protected Builder getThis() {
+            return this;
+        }
+
+        /**
+         * Set the language of the input.
+         * @param language the language.
+         * @return this
+         */
+        public Builder language(LanguageCode language) {
+            this.language = language;
+            return getThis();
+        }
+
+        /**
+         * Set the options for this request.
+         * @param options the options.
+         * @return this
+         */
+        public Builder options(Options options) {
+            this.options = options;
+            return getThis();
+        }
+
+        /**
+         * Set the genre of the request.
+         * @param genre genre (ex: social-media)
+         * @return this
+         */
+        public Builder genre(String genre) {
+            this.genre = genre;
+            return getThis();
+        }
+
+        /**
+         * Set the apiKey for the requests
+         * @param key apiKey
+         * @return this
+         */
+        public Builder apiKey(String key) {
+            this.key = key;
+            return getThis();
+        }
+
+        /**
+         * Sets an alternative url for testing purposes
+         * @param url alternative url
+         * @return this
+         */
+        public Builder alternateUrl(String url) {
+            if (url != null) {
+                this.urlBase = url;
+            }
+            return getThis();
+        }
+
+        /**
+         * Set failure retries, default 1
+         * @param retries number of retries
+         * @return this
+         */
+        public Builder failureRetries(int retries) {
+            this.failureRetries = retries;
+            return getThis();
+        }
+
+        /**
+         * User can provide their own http client
+         * @param client CloseableHttpClient
+         * @return this
+         */
+        public Builder httpClient(HttpClient client) {
+            this.httpClient = client;
+            return getThis();
+        }
+
+        /**
+         * Construct the api object.
+         * @return the api object.
+         */
+        public RosetteAPI build() throws IOException, RosetteAPIException {
+            return new RosetteAPI(key, urlBase, failureRetries, language, genre, options, httpClient);
+        }
     }
 }

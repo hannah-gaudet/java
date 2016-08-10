@@ -20,6 +20,7 @@ import com.basistech.rosette.apimodel.AccuracyMode;
 import com.basistech.rosette.apimodel.CategoriesOptions;
 import com.basistech.rosette.apimodel.CategoriesResponse;
 import com.basistech.rosette.apimodel.ConstantsResponse;
+import com.basistech.rosette.apimodel.DocumentRequest;
 import com.basistech.rosette.apimodel.EntitiesOptions;
 import com.basistech.rosette.apimodel.EntitiesResponse;
 import com.basistech.rosette.apimodel.EntityMention;
@@ -45,19 +46,20 @@ import com.basistech.rosette.apimodel.PingResponse;
 import com.basistech.rosette.apimodel.Relationship;
 import com.basistech.rosette.apimodel.RelationshipsOptions;
 import com.basistech.rosette.apimodel.RelationshipsResponse;
-import com.basistech.rosette.apimodel.DocumentRequest;
-import com.basistech.rosette.apimodel.Request;
 import com.basistech.rosette.apimodel.Response;
 import com.basistech.rosette.apimodel.SentencesResponse;
 import com.basistech.rosette.apimodel.SentimentOptions;
 import com.basistech.rosette.apimodel.SentimentResponse;
+import com.basistech.rosette.apimodel.TextVectorsResponse;
 import com.basistech.rosette.apimodel.TokensResponse;
 import com.basistech.rosette.apimodel.batch.BatchRequest;
 import com.basistech.rosette.apimodel.batch.BatchRequestItem;
 import com.basistech.rosette.apimodel.batch.BatchResponse;
+import com.basistech.rosette.apimodel.batch.BatchStatusResponse;
 import com.basistech.rosette.apimodel.jackson.batch.BatchRequestItemMixin;
 import com.basistech.rosette.apimodel.jackson.batch.BatchRequestMixin;
 import com.basistech.rosette.apimodel.jackson.batch.BatchResponseMixin;
+import com.basistech.rosette.apimodel.jackson.batch.BatchStatusResponseMixin;
 import com.basistech.util.jackson.EnumModule;
 import com.fasterxml.jackson.databind.Module;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -100,7 +102,6 @@ public class ApiModelMixinModule extends EnumModule {
         context.setMixInAnnotations(NameTranslationRequest.class, NameTranslationRequestMixin.class);
         context.setMixInAnnotations(NameTranslationResponse.class, NameTranslationResponseMixin.class);
         context.setMixInAnnotations(PingResponse.class, PingResponseMixin.class);
-        context.setMixInAnnotations(Request.class, RequestMixin.class);
         context.setMixInAnnotations(DocumentRequest.class, DocumentRequestMixin.class);
         context.setMixInAnnotations(SentencesResponse.class, SentencesResponseMixin.class);
         context.setMixInAnnotations(SentimentOptions.class, SentimentOptionsMixin.class);
@@ -119,6 +120,9 @@ public class ApiModelMixinModule extends EnumModule {
         context.setMixInAnnotations(BatchRequest.class, BatchRequestMixin.class);
         context.setMixInAnnotations(BatchRequestItem.class, BatchRequestItemMixin.class);
         context.setMixInAnnotations(BatchResponse.class, BatchResponseMixin.class);
+
+        context.setMixInAnnotations(BatchStatusResponse.class, BatchStatusResponseMixin.class);
+        context.setMixInAnnotations(TextVectorsResponse.class, TextVectorsResponseMixin.class);
     }
 
     /**

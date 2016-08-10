@@ -16,6 +16,14 @@
 
 package com.basistech.rosette.apimodel.jackson;
 
-public abstract class OptionsMixin extends BaseMixin {
-    //
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import java.util.List;
+
+public class TextVectorsResponseMixin extends BaseMixin {
+    @JsonCreator
+    public TextVectorsResponseMixin(@JsonProperty("vectors") List<Double> vectors) {
+        //
+    }
 }
